@@ -22,6 +22,8 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
+#include <ctime>
 
 const int WIDTH = 300;
 const int HEIGHT = 300;
@@ -44,6 +46,7 @@ public:
     double alpha = 0.5;      // Transfer coefficient
     double k_rate = 0.1;     // Reaction rate constant (related to j0)
     double voltage = 10.0;   // Applied voltage
+    int geometry = 0;        // 0: Plate, 1: Wire, 2: Array
     
     ElectroSim() {
         grid.resize(WIDTH * HEIGHT);
@@ -61,15 +64,31 @@ public:
 
         // Setup Anode (Top)
         for (int x = 0; x < WIDTH; ++x) {
-            // Top boundary acts as source of ions (Anode)
             grid[(HEIGHT - 1) * WIDTH + x].c = 1.0;
         }
 
-        // Setup Initial Cathode (Bottom or Center)
-        // Let's do a bottom plate cathode by default
-        for (int x = 0; x < WIDTH; x++) {
-            grid[0 * WIDTH + x].solid = 1.0;
-            grid[0 * WIDTH + x].isCathode = true;
+        // Setup Initial Cathode based on geometry
+        if (geometry == 0) { // Plate
+            for (int x = 0; x < WIDTH; x++) {
+                grid[0 * WIDTH + x].solid = 1.0;
+                grid[0 * WIDTH + x].isCathode = true;
+            }
+        } else if (geometry == 1) { // Wire (Center)
+            int cx = WIDTH / 2;
+            int cy = HEIGHT / 4;
+            for(int dy=-2; dy<=2; dy++) {
+                for(int dx=-2; dx<=2; dx++) {
+                    grid[(cy+dy)*WIDTH + (cx+dx)].solid = 1.0;
+                    grid[(cy+dy)*WIDTH + (cx+dx)].isCathode = true;
+                }
+            }
+        } else { // Array
+            for (int x = 50; x < WIDTH; x += 100) {
+                for(int dx=-5; dx<=5; dx++) {
+                    grid[0 * WIDTH + x + dx].solid = 1.0;
+                    grid[0 * WIDTH + x + dx].isCathode = true;
+                }
+            }
         }
     }
 
@@ -77,7 +96,7 @@ public:
     void solvePotential() {
         // Successive Over-Relaxation (SOR) for speed
         const double omega = 1.8;
-        for (int iter = 0; iter < 10; ++iter) {
+        for (int iter = 0; iter < 20; ++iter) {
             for (int y = 0; y < HEIGHT; ++y) {
                 for (int x = 0; x < WIDTH; ++x) {
                     int idx = y * WIDTH + x;
@@ -138,15 +157,18 @@ public:
                 // Check neighbors for solid
                 if (grid[l].solid > 0.5 || grid[r].solid > 0.5 || grid[u].solid > 0.5 || grid[d].solid > 0.5) {
                     isInterface = true;
-                    // Simplified Butler-Volmer: reaction rate proportional to C and exp(-alpha * eta)
-                    // Here eta is roughly related to the local potential gradient or just the local Phi
-                    double eta = grid[idx].phi - 0.0; // Overpotential (Phi_sol - Phi_metal)
-                    reaction = k_rate * grid[idx].c * exp(alpha * eta * 0.5); 
+                    // Butler-Volmer: reaction rate proportional to C and exp(alpha * eta)
+                    double eta = grid[idx].phi;
+                    reaction = k_rate * grid[idx].c * exp(alpha * eta);
+
+                    // Stochastic term to encourage dendritic growth
+                    double noise = 1.0 + 0.2 * ((double)rand() / RAND_MAX - 0.5);
+                    reaction *= noise;
                 }
 
                 // Integration
                 nextGrid[idx].c = grid[idx].c + D * lapC + migration - reaction;
-                nextGrid[idx].solid = grid[idx].solid + reaction * 0.2; // Growth
+                nextGrid[idx].solid = grid[idx].solid + reaction * 0.5; // Faster growth
                 
                 // Clamp
                 if (nextGrid[idx].c < 0) nextGrid[idx].c = 0;
@@ -225,27 +247,83 @@ void volt_cb(Fl_Widget* w, void* v) {
     sim->voltage = ((Fl_Value_Slider*)w)->value();
 }
 
+void d_cb(Fl_Widget* w, void* v) {
+    ElectroSim* sim = (ElectroSim*)v;
+    sim->D = ((Fl_Value_Slider*)w)->value();
+}
+
+void mobility_cb(Fl_Widget* w, void* v) {
+    ElectroSim* sim = (ElectroSim*)v;
+    sim->mobility = ((Fl_Value_Slider*)w)->value();
+}
+
+void alpha_cb(Fl_Widget* w, void* v) {
+    ElectroSim* sim = (ElectroSim*)v;
+    sim->alpha = ((Fl_Value_Slider*)w)->value();
+}
+
+void krate_cb(Fl_Widget* w, void* v) {
+    ElectroSim* sim = (ElectroSim*)v;
+    sim->k_rate = ((Fl_Value_Slider*)w)->value();
+}
+
+void geom_cb(Fl_Widget* w, void* v) {
+    ElectroSim* sim = (ElectroSim*)v;
+    sim->geometry = ((Fl_Choice*)w)->value();
+    sim->reset();
+}
+
 void reset_cb(Fl_Widget* w, void* v) {
     ElectroSim* sim = (ElectroSim*)v;
     sim->reset();
 }
 
 int main(int argc, char** argv) {
+    srand(time(NULL));
     ElectroSim sim;
-    Fl_Double_Window* win = new Fl_Double_Window(500, 400, "Realistic Electroplating Sim");
-    ElectroWindow* glWin = new ElectroWindow(10, 10, 300, 300, &sim);
+    Fl_Double_Window* win = new Fl_Double_Window(600, 500, "Enhanced Electroplating Lab");
+    ElectroWindow* glWin = new ElectroWindow(10, 10, 400, 400, &sim);
 
-    Fl_Value_Slider* vSlider = new Fl_Value_Slider(320, 30, 150, 20, "Voltage");
+    int ctrlX = 420;
+
+    Fl_Value_Slider* vSlider = new Fl_Value_Slider(ctrlX, 30, 160, 20, "Applied Voltage");
     vSlider->bounds(0.0, 50.0);
-    vSlider->value(10.0);
+    vSlider->value(sim.voltage);
     vSlider->callback(volt_cb, &sim);
 
-    Fl_Button* rBtn = new Fl_Button(320, 80, 150, 30, "Reset");
+    Fl_Value_Slider* dSlider = new Fl_Value_Slider(ctrlX, 70, 160, 20, "Diffusion (D)");
+    dSlider->bounds(0.0, 0.5);
+    dSlider->value(sim.D);
+    dSlider->callback(d_cb, &sim);
+
+    Fl_Value_Slider* mSlider = new Fl_Value_Slider(ctrlX, 110, 160, 20, "Mobility");
+    mSlider->bounds(0.0, 2.0);
+    mSlider->value(sim.mobility);
+    mSlider->callback(mobility_cb, &sim);
+
+    Fl_Value_Slider* aSlider = new Fl_Value_Slider(ctrlX, 150, 160, 20, "Alpha (Transfer)");
+    aSlider->bounds(0.1, 0.9);
+    aSlider->value(sim.alpha);
+    aSlider->callback(alpha_cb, &sim);
+
+    Fl_Value_Slider* kSlider = new Fl_Value_Slider(ctrlX, 190, 160, 20, "Reaction Rate (k)");
+    kSlider->bounds(0.0, 1.0);
+    kSlider->value(sim.k_rate);
+    kSlider->callback(krate_cb, &sim);
+
+    Fl_Choice* gChoice = new Fl_Choice(ctrlX, 230, 160, 25, "Cathode Geometry");
+    gChoice->add("Bottom Plate");
+    gChoice->add("Wire / Point");
+    gChoice->add("Dot Array");
+    gChoice->value(0);
+    gChoice->callback(geom_cb, &sim);
+
+    Fl_Button* rBtn = new Fl_Button(ctrlX, 270, 160, 30, "Reset Simulation");
     rBtn->callback(reset_cb, &sim);
 
-    Fl_Box* desc = new Fl_Box(320, 130, 150, 200, 
+    Fl_Box* desc = new Fl_Box(ctrlX, 310, 160, 150,
         "Model:\n- Nernst-Planck\n- Butler-Volmer\n- Laplace Potential\n\n"
-        "Colors:\n- Copper: Metal\n- Blue: Ions\n- Green: Potential");
+        "Visualization:\n- Copper: Metal\n- Blue: Ion density\n- Green: Potential");
     desc->align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
 
     win->end();
