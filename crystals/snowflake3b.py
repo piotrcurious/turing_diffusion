@@ -350,13 +350,8 @@ class AdvancedSnowflakeSimulation:
         ix_first = np.clip(ix_first, 0, self.size - 1)
         iy_first = np.clip(iy_first, 0, self.size - 1)
         
-        # Get the crystal state in the first sector
-        # (This is a bit inefficient but works for demo purposes)
-        first_sector_crystal = np.zeros_like(self.crystal)
-        for i in range(self.size):
-            for j in range(self.size):
-                if 0 <= iy_first[i, j] < self.size and 0 <= ix_first[i, j] < self.size:
-                    first_sector_crystal[i, j] = self.crystal[iy_first[i, j], ix_first[i, j]]
+        # Get the crystal state in the first sector using vectorized indexing
+        first_sector_crystal = self.crystal[iy_first, ix_first]
         
         # Apply rotation symmetry
         for k in range(self.symmetry_order):
@@ -368,12 +363,9 @@ class AdvancedSnowflakeSimulation:
             ix = np.round(rot_x + self.center).astype(int)
             iy = np.round(rot_y + self.center).astype(int)
             
-            # Copy the first sector pattern to each rotated sector
-            for i in range(self.size):
-                for j in range(self.size):
-                    if (0 <= iy[i, j] < self.size and 0 <= ix[i, j] < self.size and
-                        first_sector_crystal[i, j] > 0):
-                        symmetric_crystal[iy[i, j], ix[i, j]] = 1
+            # Copy the first sector pattern to each rotated sector using vectorized indexing
+            mask = (iy >= 0) & (iy < self.size) & (ix >= 0) & (ix < self.size) & (first_sector_crystal > 0)
+            symmetric_crystal[iy[mask], ix[mask]] = 1
         
         # Ensure the center is crystallized
         symmetric_crystal[self.center, self.center] = 1

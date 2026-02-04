@@ -38,6 +38,10 @@ std::vector<Substance> substances;
 Substance currentSubstance;
 bool resetFlag = false;
 
+// UI Pointers
+Fl_Value_Slider* fSliderPtr = nullptr;
+Fl_Value_Slider* kSliderPtr = nullptr;
+
 // --- Physics Engine ---
 
 struct Cell {
@@ -239,7 +243,9 @@ void choice_cb(Fl_Widget* w, void* v) {
     currentSubstance = substances[idx];
     
     // Update Sliders to match preset
-    // (In a full app we would pass pointers to sliders to update them visually)
+    if (fSliderPtr) fSliderPtr->value(currentSubstance.F);
+    if (kSliderPtr) kSliderPtr->value(currentSubstance.k);
+
     std::cout << "Selected: " << currentSubstance.name << std::endl;
     resetFlag = true;
 }
@@ -276,17 +282,17 @@ int main(int argc, char** argv) {
     choice->value(0);
     choice->callback(choice_cb);
     
-    Fl_Value_Slider* fSlider = new Fl_Value_Slider(430, 100, 150, 20, "Feed (F) - Supply");
-    fSlider->type(FL_HOR_NICE_SLIDER);
-    fSlider->bounds(0.01, 0.1);
-    fSlider->value(substances[0].F);
-    fSlider->callback(feed_cb);
+    fSliderPtr = new Fl_Value_Slider(430, 100, 150, 20, "Feed (F) - Supply");
+    fSliderPtr->type(FL_HOR_NICE_SLIDER);
+    fSliderPtr->bounds(0.01, 0.1);
+    fSliderPtr->value(substances[0].F);
+    fSliderPtr->callback(feed_cb);
     
-    Fl_Value_Slider* kSlider = new Fl_Value_Slider(430, 160, 150, 20, "Kill (k) - Solubility");
-    kSlider->type(FL_HOR_NICE_SLIDER);
-    kSlider->bounds(0.03, 0.07);
-    kSlider->value(substances[0].k);
-    kSlider->callback(kill_cb);
+    kSliderPtr = new Fl_Value_Slider(430, 160, 150, 20, "Kill (k) - Solubility");
+    kSliderPtr->type(FL_HOR_NICE_SLIDER);
+    kSliderPtr->bounds(0.03, 0.07);
+    kSliderPtr->value(substances[0].k);
+    kSliderPtr->callback(kill_cb);
 
     Fl_Button* btnReset = new Fl_Button(430, 380, 150, 30, "Clear / Reset");
     btnReset->callback(reset_cb);

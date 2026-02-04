@@ -326,12 +326,9 @@ class AdvancedSnowflakeModel:
             # Filter valid indices
             valid = (x_idx >= 0) & (x_idx < self.size) & (y_idx >= 0) & (y_idx < self.size)
             
-            # Map values from first sector to rotated positions
-            for j in range(self.size):
-                for k in range(self.size):
-                    if first_sector[j, k] and valid[j, k]:
-                        x_dest, y_dest = x_idx[j, k], y_idx[j, k]
-                        symmetric_field[y_dest, x_dest] = sector_values[j, k]
+            # Map values from first sector to rotated positions using vectorized indexing
+            mask = first_sector & valid
+            symmetric_field[y_idx[mask], x_idx[mask]] = sector_values[mask]
         
         return symmetric_field
     
