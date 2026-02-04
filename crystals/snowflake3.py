@@ -207,8 +207,9 @@ class AdvancedSnowflakeModel:
         self.temperature_field[:, :margin] = 0
         self.temperature_field[:, -margin:] = 0
         
+    @staticmethod
     @jit(nopython=True)
-    def _diffuse_field(self, field, diffusion_rate):
+    def _diffuse_field(field, diffusion_rate):
         """Apply diffusion to a field using the Laplace operator."""
         # Optimized diffusion calculation
         laplacian = (
@@ -740,4 +741,9 @@ if __name__ == "__main__":
         model.run(steps=80)
         
         # Plot final result
-        plt.figure(figsize=(12, 12))
+        model.plot()
+        plt.savefig("snowflake_final.png")
+        print("Final snowflake image saved as snowflake_final.png")
+        plt.show()
+
+    print("\nDone!")

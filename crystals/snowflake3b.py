@@ -104,8 +104,8 @@ class AdvancedSnowflakeSimulation:
         
         # Prepare JIT-compiled functions if enabled
         if self.use_jit:
-            self.jit_diffuse_step = jit(nopython=True)(self._diffuse_step_raw)
-            self.jit_growth_step = jit(nopython=True)(self._growth_step_raw)
+            self.jit_diffuse_step = jit(nopython=True)(self._diffuse_step_static)
+            self.jit_growth_step = jit(nopython=True)(self._growth_step_static)
         
         # Create neighbor lookup array for faster neighborhood checks
         self.neighbors = [(-1, -1), (-1, 0), (-1, 1), 
@@ -157,13 +157,15 @@ class AdvancedSnowflakeSimulation:
         
         return boundary
     
-    def _diffuse_step_raw(self, vapor_density, crystal, diffusion_coef, boundary_value):
+    @staticmethod
+    def _diffuse_step_static(vapor_density, crystal, diffusion_coef, boundary_value):
         """Raw implementation of the diffusion step (for JIT compilation)."""
         new_vapor = np.copy(vapor_density)
+        size_y, size_x = vapor_density.shape
         
         # Apply diffusion using a discrete Laplacian
-        for i in range(1, self.size - 1):
-            for j in range(1, self.size - 1):
+        for i in range(1, size_y - 1):
+            for j in range(1, size_x - 1):
                 # Skip if it's a crystal site
                 if crystal[i, j] == 1:
                     new_vapor[i, j] = 0
@@ -185,21 +187,23 @@ class AdvancedSnowflakeSimulation:
         new_vapor[:, -1] = boundary_value
         
         # Ensure crystal sites have zero vapor density
-        for i in range(self.size):
-            for j in range(self.size):
+        for i in range(size_y):
+            for j in range(size_x):
                 if crystal[i, j] == 1:
                     new_vapor[i, j] = 0
         
         return new_vapor
     
-    def _growth_step_raw(self, vapor_density, crystal, boundary_vapor, anisotropy_field, 
+    @staticmethod
+    def _growth_step_static(vapor_density, crystal, boundary_vapor, anisotropy_field,
                           attachment_prob, noise_scale, rng_seeds):
         """Raw implementation of the growth step (for JIT compilation)."""
         new_crystal = np.copy(crystal)
+        size_y, size_x = crystal.shape
         
         # Find boundary sites
-        for i in range(1, self.size - 1):
-            for j in range(1, self.size - 1):
+        for i in range(1, size_y - 1):
+            for j in range(1, size_x - 1):
                 # Skip if already crystal or not at boundary
                 if crystal[i, j] == 1:
                     continue
@@ -227,7 +231,7 @@ class AdvancedSnowflakeSimulation:
                 growth_prob = base_prob * direction_factor * (1 + noise)
                 
                 # Probabilistic growth
-                if rng_seeds[i, j + self.size] < growth_prob:
+                if rng_seeds[i, j + size_x] < growth_prob:
                     new_crystal[i, j] = 1
         
         return new_crystal
