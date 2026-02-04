@@ -8,6 +8,7 @@ import argparse
 import os
 from datetime import datetime
 from numba import jit
+from matplotlib.widgets import Slider, Button
 
 
 class AdvancedSnowflakeSimulation:
@@ -605,6 +606,86 @@ class AdvancedSnowflakeSimulation:
         return fig
 
 
+def matplotlib_interactive_simulation(args):
+    """Run an interactive simulation using matplotlib widgets."""
+    sim = AdvancedSnowflakeSimulation(
+        size=args.size,
+        temperature=args.temp,
+        humidity=args.humidity,
+        random_seed=args.seed,
+        symmetry_order=args.sym
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 12))
+    plt.subplots_adjust(bottom=0.3)
+
+    # Create colormap
+    ice_colors = [(0.9, 0.95, 1), (0.6, 0.8, 0.9), (0.2, 0.4, 0.8)]
+    ice_cmap = LinearSegmentedColormap.from_list("ice", ice_colors)
+
+    crystal_display = sim.get_display_crystal()
+    img = ax.imshow(crystal_display, cmap=ice_cmap)
+    ax.set_title(f"Snowflake Simulation: T={sim.temperature}°C, RH={sim.humidity*100:.0f}%")
+    ax.axis('off')
+
+    # Define axes for sliders
+    ax_temp = plt.axes([0.2, 0.22, 0.65, 0.02])
+    ax_hum = plt.axes([0.2, 0.18, 0.65, 0.02])
+    ax_attr = plt.axes([0.2, 0.14, 0.65, 0.02])
+    ax_diff = plt.axes([0.2, 0.10, 0.65, 0.02])
+
+    # Create sliders
+    s_temp = Slider(ax_temp, 'Temp', -30.0, 0.0, valinit=sim.temperature)
+    s_hum = Slider(ax_hum, 'Humidity', 0.5, 1.2, valinit=sim.humidity)
+    s_attr = Slider(ax_attr, 'Attach', 0.01, 0.2, valinit=sim.attachment_rate)
+    s_diff = Slider(ax_diff, 'Diffusion', 0.01, 0.5, valinit=sim.diffusion_coefficient)
+
+    def update_params(val):
+        sim.temperature = s_temp.val
+        sim.humidity = s_hum.val
+        sim.attachment_rate = s_attr.val
+        sim.diffusion_coefficient = s_diff.val
+        sim.compute_physical_parameters()
+        ax.set_title(f"Snowflake Simulation: T={sim.temperature:.1f}°C, RH={sim.humidity*100:.0f}%")
+
+    s_temp.on_changed(update_params)
+    s_hum.on_changed(update_params)
+    s_attr.on_changed(update_params)
+    s_diff.on_changed(update_params)
+
+    # Add buttons
+    ax_reset = plt.axes([0.8, 0.02, 0.1, 0.04])
+    ax_step = plt.axes([0.65, 0.02, 0.1, 0.04])
+    ax_run = plt.axes([0.5, 0.02, 0.1, 0.04])
+
+    btn_reset = Button(ax_reset, 'Reset')
+    btn_step = Button(ax_step, 'Step')
+    btn_run = Button(ax_run, 'Run 10')
+
+    def reset(event):
+        sim.init_simulation_grid()
+        sim.step_count = 0
+        sim.max_radius = sim.initial_seed_size
+        img.set_array(sim.get_display_crystal())
+        fig.canvas.draw_idle()
+
+    def step(event):
+        sim.step()
+        img.set_array(sim.get_display_crystal())
+        fig.canvas.draw_idle()
+
+    def run_10(event):
+        for _ in range(10):
+            sim.step()
+        img.set_array(sim.get_display_crystal())
+        fig.canvas.draw_idle()
+
+    btn_reset.on_clicked(reset)
+    btn_step.on_clicked(step)
+    btn_run.on_clicked(run_10)
+
+    plt.show()
+
 def main():
     """Main function to run the simulation with command-line arguments."""
     parser = argparse.ArgumentParser(description="Advanced Snowflake Growth Simulation")
@@ -617,6 +698,7 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--sym", type=int, default=6, help="Symmetry order (6 for normal snowflakes)")
     parser.add_argument("--animate", action="store_true", help="Create animation")
+    parser.add_argument("--interactive", action="store_true", help="Run interactive GUI")
     parser.add_argument("--save", action="store_true", help="Save output")
     parser.add_argument("--vapor", action="store_true", help="Include vapor field in visualization")
     parser.add_argument("--compare", action="store_true", help="Create comparison across temperatures")
@@ -645,6 +727,10 @@ def main():
         plt.show()
         return
     
+    if args.interactive:
+        matplotlib_interactive_simulation(args)
+        return
+
     # Create simulation
     print(f"Initializing simulation: T={args.temp}°C, H={args.humidity*100:.0f}%")
     sim = AdvancedSnowflakeSimulation(

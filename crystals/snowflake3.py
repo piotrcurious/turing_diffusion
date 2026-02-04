@@ -7,6 +7,7 @@ from numba import jit
 import time
 import os
 from datetime import datetime
+from matplotlib.widgets import Slider, Button
 
 class AdvancedSnowflakeModel:
     def __init__(self, 
@@ -99,6 +100,10 @@ class AdvancedSnowflakeModel:
         # Track iteration count
         self.iteration = 0
         
+        # Store history for navigation
+        self.history = []
+        self.store_history()
+
         # Prepare output directory for saving results
         self.output_dir = f"snowflake_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
@@ -332,6 +337,15 @@ class AdvancedSnowflakeModel:
         
         return symmetric_field
     
+    def store_history(self):
+        """Store current state in history."""
+        self.history.append({
+            'iteration': self.iteration,
+            'phase': self.phase.copy(),
+            'vapor': self.vapor.copy(),
+            'temperature_field': self.temperature_field.copy()
+        })
+
     def step(self):
         """Perform one step of the simulation."""
         # 1. Diffuse vapor field
@@ -363,6 +377,10 @@ class AdvancedSnowflakeModel:
         
         # Increment iteration counter
         self.iteration += 1
+
+        # Store history every 10 steps
+        if self.iteration % 10 == 0:
+            self.store_history()
     
     def _add_secondary_branches(self):
         """Add secondary branching through controlled nucleation."""
@@ -625,6 +643,104 @@ def moriyama_diagram():
     plt.savefig("moriyama_diagram.png", dpi=300)
     plt.show()
 
+def matplotlib_interactive_simulation():
+    """Run an interactive simulation using matplotlib widgets."""
+    # Choose a mode
+    mode = 'dendrite'
+    size = 300
+    model = AdvancedSnowflakeModel(size=size, mode=mode)
+
+    fig, ax = plt.subplots(figsize=(10, 12))
+    plt.subplots_adjust(bottom=0.3)
+
+    # Create a cool blue colormap for snowflakes
+    colors = [(0, 0, 0.2), (0, 0.5, 0.9), (0.9, 0.9, 1)]
+    cmap_snow = LinearSegmentedColormap.from_list("snowflake", colors)
+
+    img = ax.imshow(model.phase, cmap=cmap_snow, origin='lower',
+                   vmin=0, vmax=1, interpolation='bilinear')
+    ax.set_title(f"Snowflake Growth - Iteration {model.iteration}\nMode: {model.mode}")
+    ax.axis('off')
+
+    # Define axes for sliders
+    ax_stage = plt.axes([0.2, 0.24, 0.65, 0.02])
+    ax_vapor = plt.axes([0.2, 0.20, 0.65, 0.02])
+    ax_heat = plt.axes([0.2, 0.16, 0.65, 0.02])
+    ax_attach = plt.axes([0.2, 0.12, 0.65, 0.02])
+    ax_anis = plt.axes([0.2, 0.08, 0.65, 0.02])
+
+    # Create sliders
+    s_stage = Slider(ax_stage, 'Stage', 0, 1, valinit=0, valstep=1)
+    s_vapor = Slider(ax_vapor, 'Vapor Diff', 0.5, 1.5, valinit=model.vapor_diffusion_rate)
+    s_heat = Slider(ax_heat, 'Heat Diff', 0.5, 2.0, valinit=model.heat_diffusion_rate)
+    s_attach = Slider(ax_attach, 'Attach Coeff', 0.1, 1.0, valinit=model.attachment_coefficient)
+    s_anis = Slider(ax_anis, 'Anisotropy', 0.0, 1.0, valinit=model.anisotropy_strength)
+
+    def update_params(val):
+        model.vapor_diffusion_rate = s_vapor.val
+        model.heat_diffusion_rate = s_heat.val
+        model.attachment_coefficient = s_attach.val
+        model.anisotropy_strength = s_anis.val
+
+    s_vapor.on_changed(update_params)
+    s_heat.on_changed(update_params)
+    s_attach.on_changed(update_params)
+    s_anis.on_changed(update_params)
+
+    def update_stage(val):
+        idx = int(s_stage.val)
+        if idx < len(model.history):
+            state = model.history[idx]
+            img.set_array(state['phase'])
+            ax.set_title(f"Snowflake Growth - Iteration {state['iteration']}\nMode: {model.mode}")
+            fig.canvas.draw_idle()
+
+    s_stage.on_changed(update_stage)
+
+    # Add buttons
+    ax_reset = plt.axes([0.8, 0.02, 0.1, 0.04])
+    ax_step = plt.axes([0.65, 0.02, 0.1, 0.04])
+    ax_run = plt.axes([0.5, 0.02, 0.1, 0.04])
+
+    btn_reset = Button(ax_reset, 'Reset')
+    btn_step = Button(ax_step, 'Step')
+    btn_run = Button(ax_run, 'Run 10')
+
+    def reset(event):
+        model.__init__(size=size, mode=mode,
+                      vapor_diffusion_rate=s_vapor.val,
+                      heat_diffusion_rate=s_heat.val,
+                      attachment_coefficient=s_attach.val,
+                      anisotropy_strength=s_anis.val)
+        s_stage.valmax = 0
+        s_stage.set_val(0)
+        img.set_array(model.phase)
+        ax.set_title(f"Snowflake Growth - Iteration {model.iteration}\nMode: {model.mode}")
+        fig.canvas.draw_idle()
+
+    def step(event):
+        model.step()
+        img.set_array(model.phase)
+        ax.set_title(f"Snowflake Growth - Iteration {model.iteration}\nMode: {model.mode}")
+        s_stage.valmax = len(model.history) - 1
+        s_stage.set_val(len(model.history) - 1)
+        fig.canvas.draw_idle()
+
+    def run_10(event):
+        for _ in range(10):
+            model.step()
+        img.set_array(model.phase)
+        ax.set_title(f"Snowflake Growth - Iteration {model.iteration}\nMode: {model.mode}")
+        s_stage.valmax = len(model.history) - 1
+        s_stage.set_val(len(model.history) - 1)
+        fig.canvas.draw_idle()
+
+    btn_reset.on_clicked(reset)
+    btn_step.on_clicked(step)
+    btn_run.on_clicked(run_10)
+
+    plt.show()
+
 def sample_3d_visualization(model):
     """Create a simple 3D visualization of the snowflake."""
     try:
@@ -700,9 +816,10 @@ if __name__ == "__main__":
     print("6. Compare all modes")
     print("7. Show temperature effects")
     print("8. Show Moriyama diagram (morphology map)")
+    print("9. Interactive GUI")
     
     # Uncomment for interactive use
-    # choice = input("Enter choice (1-8): ")
+    # choice = input("Enter choice (1-9): ")
     
     # For demonstration, choose dendrite mode
     choice = "1"
@@ -713,6 +830,8 @@ if __name__ == "__main__":
         compare_temperature_effects()
     elif choice == "8":
         moriyama_diagram()
+    elif choice == "9":
+        matplotlib_interactive_simulation()
     else:
         # Map choice to mode
         mode_map = {

@@ -7,6 +7,7 @@ import time
 from tqdm import tqdm
 from numba import jit, prange
 import argparse
+from matplotlib.widgets import Slider, Button
 
 class AdvancedSnowflakeSimulation:
     """
@@ -102,6 +103,10 @@ class AdvancedSnowflakeSimulation:
         # Track simulation steps
         self.steps = 0
         
+        # Store history for navigation
+        self.history = []
+        self.store_history()
+
         # Prepare JIT-compiled functions if enabled
         if self.use_jit:
             self.jit_diffuse_step = jit(nopython=True)(self._diffuse_step_static)
@@ -376,6 +381,15 @@ class AdvancedSnowflakeSimulation:
         # Update vapor density to match crystal
         self.vapor_density = self.vapor_density * (1 - self.crystal)
     
+    def store_history(self):
+        """Store current state in history."""
+        self.history.append({
+            'steps': self.steps,
+            'crystal': self.crystal.copy(),
+            'vapor_density': self.vapor_density.copy(),
+            'temperature_field': self.temperature_field.copy()
+        })
+
     def step(self):
         """Perform one step of the simulation."""
         # Diffuse vapor
@@ -395,6 +409,10 @@ class AdvancedSnowflakeSimulation:
         
         # Increment step counter
         self.steps += 1
+
+        # Store history every 10 steps
+        if self.steps % 10 == 0:
+            self.store_history()
     
     def run(self, steps=100, progress=True):
         """Run the simulation for a given number of steps."""
@@ -633,6 +651,105 @@ def parameter_study():
     plt.savefig("parameter_study.png", dpi=150)
     plt.show()
 
+def matplotlib_interactive_simulation(args):
+    """Run an interactive simulation using matplotlib widgets."""
+    sim = AdvancedSnowflakeSimulation(
+        size=args.size,
+        symmetry_order=args.sym,
+        diffusion_coefficient=args.diff,
+        anisotropy_strength=args.anis,
+        temperature=args.temp
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 12))
+    plt.subplots_adjust(bottom=0.3)
+
+    # Create colormap
+    colors = [(0.8, 0.9, 1, 0), (0.8, 0.9, 1, 0.3), (1, 1, 1, 1)]
+    custom_cmap = LinearSegmentedColormap.from_list("snowflake_crystal", colors)
+
+    img = ax.imshow(sim.crystal, cmap=custom_cmap, origin='lower')
+    ax.set_title(f"Snowflake Simulation: Step {sim.steps}")
+    ax.axis('off')
+
+    # Define axes for sliders
+    ax_stage = plt.axes([0.2, 0.24, 0.65, 0.02])
+    ax_temp = plt.axes([0.2, 0.20, 0.65, 0.02])
+    ax_anis = plt.axes([0.2, 0.16, 0.65, 0.02])
+    ax_diff = plt.axes([0.2, 0.12, 0.65, 0.02])
+    ax_attach = plt.axes([0.2, 0.08, 0.65, 0.02])
+
+    # Create sliders
+    s_stage = Slider(ax_stage, 'Stage', 0, 1, valinit=0, valstep=1)
+    s_temp = Slider(ax_temp, 'Temp', -30.0, 0.0, valinit=sim.temperature)
+    s_anis = Slider(ax_anis, 'Anisotropy', 0.0, 1.0, valinit=sim.anisotropy_strength)
+    s_diff = Slider(ax_diff, 'Diffusion', 0.01, 0.3, valinit=sim.diffusion_coefficient)
+    s_attach = Slider(ax_attach, 'Attachment', 0.1, 1.0, valinit=sim.attachment_probability)
+
+    def update_params(val):
+        sim.temperature = s_temp.val
+        sim.anisotropy_strength = s_anis.val
+        sim.diffusion_coefficient = s_diff.val
+        sim.attachment_probability = s_attach.val
+        sim.compute_anisotropy_field()
+
+    s_temp.on_changed(update_params)
+    s_anis.on_changed(update_params)
+    s_diff.on_changed(update_params)
+    s_attach.on_changed(update_params)
+
+    def update_stage(val):
+        idx = int(s_stage.val)
+        if idx < len(sim.history):
+            state = sim.history[idx]
+            img.set_array(state['crystal'])
+            ax.set_title(f"Snowflake Simulation: Step {state['steps']}")
+            fig.canvas.draw_idle()
+
+    s_stage.on_changed(update_stage)
+
+    # Add buttons
+    ax_reset = plt.axes([0.8, 0.02, 0.1, 0.04])
+    ax_step = plt.axes([0.65, 0.02, 0.1, 0.04])
+    ax_run = plt.axes([0.5, 0.02, 0.1, 0.04])
+
+    btn_reset = Button(ax_reset, 'Reset')
+    btn_step = Button(ax_step, 'Step')
+    btn_run = Button(ax_run, 'Run 10')
+
+    def reset(event):
+        sim.__init__(size=args.size, symmetry_order=args.sym,
+                    temperature=s_temp.val, anisotropy_strength=s_anis.val,
+                    diffusion_coefficient=s_diff.val, attachment_probability=s_attach.val)
+        s_stage.valmax = 0
+        s_stage.set_val(0)
+        img.set_array(sim.crystal)
+        ax.set_title(f"Snowflake Simulation: Step {sim.steps}")
+        fig.canvas.draw_idle()
+
+    def advance_step(event):
+        sim.step()
+        img.set_array(sim.crystal)
+        ax.set_title(f"Snowflake Simulation: Step {sim.steps}")
+        s_stage.valmax = len(sim.history) - 1
+        s_stage.set_val(len(sim.history) - 1)
+        fig.canvas.draw_idle()
+
+    def run_10(event):
+        for _ in range(10):
+            sim.step()
+        img.set_array(sim.crystal)
+        ax.set_title(f"Snowflake Simulation: Step {sim.steps}")
+        s_stage.valmax = len(sim.history) - 1
+        s_stage.set_val(len(sim.history) - 1)
+        fig.canvas.draw_idle()
+
+    btn_reset.on_clicked(reset)
+    btn_step.on_clicked(advance_step)
+    btn_run.on_clicked(run_10)
+
+    plt.show()
+
 def main():
     """Main function to run the snowflake simulation."""
     parser = argparse.ArgumentParser(description="Advanced Snowflake Simulation")
@@ -643,12 +760,17 @@ def main():
     parser.add_argument("--anis", type=float, default=0.3, help="Anisotropy strength")
     parser.add_argument("--diff", type=float, default=0.14, help="Diffusion coefficient")
     parser.add_argument("--animate", action="store_true", help="Create animation")
+    parser.add_argument("--interactive", action="store_true", help="Run interactive GUI")
     parser.add_argument("--output", type=str, default="snowflake.png", help="Output image path")
     parser.add_argument("--study", type=str, choices=["temp", "sym", "param"], 
                         help="Run a parameter study")
     
     args = parser.parse_args()
     
+    if args.interactive:
+        matplotlib_interactive_simulation(args)
+        return
+
     # Run parameter studies if requested
     if args.study == "temp":
         temperature_study()
