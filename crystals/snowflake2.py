@@ -246,34 +246,20 @@ class AdvancedSnowflakeSimulation:
         Update the tip bias map based on current crystal geometry.
         This encourages dendritic growth by enhancing vapor attachment at tips.
         """
-        # Find the crystal boundary
-        crystal_boundary = np.zeros_like(self.crystal)
-        crystal_dilated = ndimage.binary_dilation(self.crystal)
-        crystal_boundary = np.logical_and(crystal_dilated, np.logical_not(self.crystal))
+        # Count crystal neighbors using convolution
+        kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
+        neighbor_count = ndimage.convolve(self.crystal.astype(float), kernel, mode='constant', cval=0)
         
         # Reset tip bias map
         self.tip_bias_map = np.ones_like(self.crystal, dtype=float)
         
-        # Calculate local curvature at each boundary point to identify tips
-        if np.any(crystal_boundary):
-            # Count neighbors for each boundary point
-            boundary_pts = np.where(crystal_boundary)
-            
-            for i, j in zip(*boundary_pts):
-                # Count crystal neighbors
-                neighbor_count = 0
-                for di, dj in self.neighbor_offsets:
-                    ni, nj = i + di, j + dj
-                    if (0 <= ni < self.crystal.shape[0] and 
-                        0 <= nj < self.crystal.shape[1] and
-                        self.crystal[ni, nj] > 0):
-                        neighbor_count += 1
-                
-                # Points with fewer crystal neighbors are more likely tips or corners
-                if neighbor_count <= 2:  # Definitely a tip or protrusion
-                    self.tip_bias_map[i, j] = self.tip_bias
-                elif neighbor_count == 3:  # Possibly a tip
-                    self.tip_bias_map[i, j] = (self.tip_bias + 1) / 2
+        # Points with fewer crystal neighbors are more likely tips or corners
+        # Identify the boundary where growth occurs
+        crystal_dilated = ndimage.binary_dilation(self.crystal)
+        growth_sites = np.logical_and(crystal_dilated, np.logical_not(self.crystal))
+
+        self.tip_bias_map[growth_sites & (neighbor_count <= 2)] = self.tip_bias
+        self.tip_bias_map[growth_sites & (neighbor_count == 3)] = (self.tip_bias + 1) / 2
     
     # @jit(nopython=False)  # Use Numba for acceleration if available
     def diffuse_vapor(self, steps=10):
@@ -313,9 +299,7 @@ class AdvancedSnowflakeSimulation:
         crystal_dilated = ndimage.binary_dilation(self.crystal)
         growth_sites = np.logical_and(crystal_dilated, np.logical_not(self.crystal))
         
-        # Calculate growth probability at each boundary site
-        growth_probability = np.zeros_like(self.crystal)
-        
+        # Calculate growth probability across the entire grid (vectorized)
         # Growth depends on:
         # 1. Local vapor concentration
         # 2. Anisotropy factor (crystal orientation preference)
@@ -323,31 +307,14 @@ class AdvancedSnowflakeSimulation:
         # 4. Noise (random fluctuations)
         # 5. Temperature effects
         
-        # Sample sites where growth can occur
-        growth_site_indices = np.where(growth_sites)
+        growth_probability = self.vapor * self.attachment_rate
+        growth_probability *= self.anisotropy_map
+        growth_probability *= self.tip_bias_map
+        growth_probability *= (1.0 + 0.5 * self.noise_field)
         
-        # Calculate growth probability for each site
-        for i, j in zip(*growth_site_indices):
-            # Base probability from vapor concentration
-            prob = self.vapor[i, j] * self.attachment_rate
-            
-            # Apply anisotropy factor based on crystal orientation
-            prob *= self.anisotropy_map[i, j]
-            
-            # Apply tip bias to encourage dendritic growth
-            prob *= self.tip_bias_map[i, j]
-            
-            # Apply noise factor for random variations
-            local_noise = 1.0 + 0.5 * self.noise_field[i, j]
-            prob *= local_noise
-            
-            # Apply temperature-dependent branching factor
-            r = np.sqrt((i - self.center)**2 + (j - self.center)**2)
-            radial_factor = min(1.0, r / (self.size/8))  # More branching away from center
-            prob *= 1.0 + (self.branching_factor * radial_factor)
-            
-            # Store the probability
-            growth_probability[i, j] = prob
+        # Apply temperature-dependent branching factor
+        radial_factor = np.minimum(1.0, self.distance_map / (self.internal_size/8))
+        growth_probability *= 1.0 + (self.branching_factor * radial_factor)
         
         # Apply growth probability to create new crystal sites
         growth_mask = (np.random.random(self.crystal.shape) < growth_probability) & growth_sites

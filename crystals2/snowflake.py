@@ -95,7 +95,10 @@ def update(frame):
     ax.set_title(f"Snowflake-like Crystal Growth (step {frame * plot_interval})")
     return [im]
 
-anim = animation.FuncAnimation(fig, update, frames=int(total_steps/plot_interval), interval=50, blit=True)
+def main():
+    anim = animation.FuncAnimation(fig, update, frames=int(total_steps/plot_interval), interval=50, blit=True)
+    plt.tight_layout()
+    plt.show()
 
-plt.tight_layout()
-plt.show()
+if __name__ == "__main__":
+    main()
