@@ -39,6 +39,18 @@ class ElectroSim {
 public:
     std::vector<Cell> grid;
     std::vector<Cell> nextGrid;
+
+    void seed(int x, int y, int radius) {
+        for (int i = x - radius; i < x + radius; ++i) {
+            for (int j = y - radius; j < y + radius; ++j) {
+                if (i >= 0 && i < WIDTH && j >= 0 && j < HEIGHT) {
+                    grid[j * WIDTH + i].solid = 1.0;
+                    grid[j * WIDTH + i].isCathode = true;
+                    grid[j * WIDTH + i].phi = 0.0;
+                }
+            }
+        }
+    }
     
     // Physical Constants (Normalized for simulation)
     double D = 0.1;          // Diffusion coefficient
@@ -130,7 +142,10 @@ public:
         for (int y = 1; y < HEIGHT - 1; ++y) {
             for (int x = 0; x < WIDTH; ++x) {
                 int idx = y * WIDTH + x;
-                if (grid[idx].solid > 0.5) continue; // Skip solid cells
+                if (grid[idx].solid > 0.5) {
+                    nextGrid[idx] = grid[idx]; // Maintain solid state
+                    continue;
+                }
 
                 // 1. Diffusion (Laplacian of C)
                 int l = (x > 0) ? idx - 1 : (x == 0 ? idx + 1 : idx); // Simple mirror at edges
@@ -192,6 +207,8 @@ class ElectroWindow : public Fl_Gl_Window {
 public:
     ElectroSim* sim;
     unsigned char* pixels;
+    bool view3d = false;
+    float rotX = 20, rotY = -20;
 
     ElectroWindow(int X, int Y, int W, int H, ElectroSim* s)
         : Fl_Gl_Window(X, Y, W, H), sim(s) {
@@ -206,11 +223,57 @@ public:
         Fl::repeat_timeout(1.0/60.0, Timer_CB, userdata);
     }
 
+    int handle(int event) {
+        static int last_mx, last_my;
+        if (event == FL_PUSH) {
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+        }
+
+        if (event == FL_DRAG && (Fl::event_button3() || (Fl::event_state() & FL_SHIFT))) {
+            rotY += (Fl::event_x() - last_mx);
+            rotX += (Fl::event_y() - last_my);
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+            redraw();
+            return 1;
+        }
+
+        if (event == FL_PUSH || event == FL_DRAG) {
+            if (!Fl::event_button3() && !(Fl::event_state() & FL_SHIFT)) {
+                // Correct coordinate mapping relative to the widget
+                int mx = Fl::event_x() - x();
+                int my = Fl::event_y() - y();
+
+                double sx = (double)WIDTH / w();
+                double sy = (double)HEIGHT / h();
+
+                int gx = mx * sx;
+                int gy = (h() - my) * sy; // OpenGL Y is bottom-up
+
+                sim->seed(gx, gy, 3);
+                return 1;
+            }
+        }
+        return Fl_Gl_Window::handle(event);
+    }
+
     void draw() {
         if (!valid()) {
             glViewport(0, 0, w(), h());
-            glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+            glEnable(GL_DEPTH_TEST);
         }
+
+        if (view3d) {
+            draw3d();
+            return;
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
 
         for (int i = 0; i < WIDTH * HEIGHT; ++i) {
             double s = sim->grid[i].solid;
@@ -236,9 +299,41 @@ public:
             pixels[i*3+2] = b;
         }
 
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glRasterPos2i(0, 0);
         glDrawPixels(WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    }
+
+    void draw3d() {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45, (double)w()/h(), 1, 1000);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0, 0, -400);
+        glRotatef(rotX, 1, 0, 0);
+        glRotatef(rotY, 0, 1, 0);
+        glTranslatef(-WIDTH/2, -HEIGHT/2, 0);
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glBegin(GL_POINTS);
+        for (int y = 0; y < HEIGHT; y+=2) {
+            for (int x = 0; x < WIDTH; x+=2) {
+                int i = y * WIDTH + x;
+                double s = sim->grid[i].solid;
+                double c = sim->grid[i].c;
+
+                if (s > 0.1) {
+                    glColor3f(0.7 + s*0.3, 0.4 + s*0.2, 0.2);
+                    glVertex3f(x, y, s * 50.0);
+                } else if (c > 0.1) {
+                    glColor3f(0.1, 0.2, 0.5 * c);
+                    glVertex3f(x, y, -10.0);
+                }
+            }
+        }
+        glEnd();
     }
 };
 
@@ -271,6 +366,12 @@ void geom_cb(Fl_Widget* w, void* v) {
     ElectroSim* sim = (ElectroSim*)v;
     sim->geometry = ((Fl_Choice*)w)->value();
     sim->reset();
+}
+
+void view_cb(Fl_Widget* w, void* v) {
+    ElectroWindow* view = (ElectroWindow*)v;
+    view->view3d = !view->view3d;
+    view->redraw();
 }
 
 void reset_cb(Fl_Widget* w, void* v) {
@@ -318,12 +419,15 @@ int main(int argc, char** argv) {
     gChoice->value(0);
     gChoice->callback(geom_cb, &sim);
 
-    Fl_Button* rBtn = new Fl_Button(ctrlX, 270, 160, 30, "Reset Simulation");
+    Fl_Button* btn3d = new Fl_Button(ctrlX, 270, 160, 30, "Toggle 3D View");
+    btn3d->callback(view_cb, glWin);
+
+    Fl_Button* rBtn = new Fl_Button(ctrlX, 310, 160, 30, "Reset Simulation");
     rBtn->callback(reset_cb, &sim);
 
-    Fl_Box* desc = new Fl_Box(ctrlX, 310, 160, 150,
+    Fl_Box* desc = new Fl_Box(ctrlX, 350, 160, 120,
         "Model:\n- Nernst-Planck\n- Butler-Volmer\n- Laplace Potential\n\n"
-        "Visualization:\n- Copper: Metal\n- Blue: Ion density\n- Green: Potential");
+        "Molecular:\n- FCC Lattice (Cu)\n- Directional bond\n- Surface energy");
     desc->align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
 
     win->end();

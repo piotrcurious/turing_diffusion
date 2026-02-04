@@ -764,38 +764,38 @@ def sample_3d_visualization(model):
     Z = model.phase
     
     # Create 3D plot - use a height threshold to show only the crystal
-    threshold = 0.5
+    threshold = 0.1
     crystal_mask = Z > threshold
     
     # Thin out the points to avoid overloading the 3D renderer
-    stride = 2
+    stride = max(1, model.size // 100)
     X_thin = X[::stride, ::stride]
     Y_thin = Y[::stride, ::stride]
     Z_thin = Z[::stride, ::stride]
     mask_thin = crystal_mask[::stride, ::stride]
     
     # Plot only the crystal points
-    ax.scatter(
-        X_thin[mask_thin], 
-        Y_thin[mask_thin], 
-        Z_thin[mask_thin] * 0.1,  # Scale height for better visualization
-        c=Z_thin[mask_thin],
-        cmap='Blues',
-        s=10,
-        alpha=0.8
-    )
+    # Height is based on phase (thickness) + some radial dropoff for aesthetics
+    r_dist = np.sqrt((X_thin - model.center)**2 + (Y_thin - model.center)**2)
+    H = Z_thin * 10.0 * (1.0 - 0.5 * r_dist / model.center)
+
+    ax.plot_surface(X_thin, Y_thin, H, facecolors=cm.Blues(Z_thin),
+                    linewidth=0, antialiased=True, alpha=0.9)
     
     # Set labels and title
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_title('3D Visualization of Snowflake Crystal')
+    ax.set_zlabel('Thickness')
+    ax.set_title(f'3D Reconstruction of {model.mode.capitalize()} Snowflake\n'
+                 'Molecular symmetry dictates the growth pattern.')
     
     # Set equal aspect ratio
-    ax.set_box_aspect([1, 1, 0.2])
+    ax.set_box_aspect([1, 1, 0.3])
+    ax.view_init(elev=35, azim=45)
     
     plt.tight_layout()
     plt.savefig("snowflake_3d.png", dpi=300)
+    print("3D visualization saved as snowflake_3d.png")
     plt.show()
 
 if __name__ == "__main__":
@@ -817,9 +817,9 @@ if __name__ == "__main__":
     print("7. Show temperature effects")
     print("8. Show Moriyama diagram (morphology map)")
     print("9. Interactive GUI")
+    print("10. 3D Visualization")
     
-    # Uncomment for interactive use
-    # choice = input("Enter choice (1-9): ")
+    # choice = input("Enter choice (1-10): ")
     
     # For demonstration, choose dendrite mode
     choice = "1"
@@ -832,6 +832,11 @@ if __name__ == "__main__":
         moriyama_diagram()
     elif choice == "9":
         matplotlib_interactive_simulation()
+    elif choice == "10":
+        print(f"Creating {mode} snowflake model...")
+        model = AdvancedSnowflakeModel(size=300, mode='dendrite')
+        model.run(steps=80)
+        sample_3d_visualization(model)
     else:
         # Map choice to mode
         mode_map = {

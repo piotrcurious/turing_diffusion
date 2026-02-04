@@ -149,10 +149,12 @@ public:
 };
 
 class CrystalWindow : public Fl_Gl_Window {
+public:
     CrystalSimulation sim;
     unsigned char* pixels; // Texture data
+    bool view3d = false;
+    float rotX = 20, rotY = -20;
 
-public:
     CrystalWindow(int X, int Y, int W, int H, const char* L)
         : Fl_Gl_Window(X, Y, W, H, L) {
         pixels = new unsigned char[WIDTH * HEIGHT * 3];
@@ -177,20 +179,37 @@ public:
 
     // Interaction: Click to add "Impurities" or Nucleation sites
     int handle(int event) {
-        if (event == FL_PUSH || event == FL_DRAG) {
-            int mx = Fl::event_x();
-            int my = Fl::event_y();
-            
-            // Map window coords to grid coords
-            float scaleX = (float)WIDTH / w();
-            float scaleY = (float)HEIGHT / h();
-            
-            // OpenGL coords are inverted in Y relative to window
-            int gridX = mx * scaleX;
-            int gridY = (h() - my) * scaleY;
+        static int last_mx, last_my;
+        if (event == FL_PUSH) {
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+        }
 
-            sim.seed(gridX, gridY, 5);
+        if (event == FL_DRAG && (Fl::event_button3() || (Fl::event_state() & FL_SHIFT))) {
+            rotY += (Fl::event_x() - last_mx);
+            rotX += (Fl::event_y() - last_my);
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+            redraw();
             return 1;
+        }
+
+        if (event == FL_PUSH || event == FL_DRAG) {
+            if (!Fl::event_button3() && !(Fl::event_state() & FL_SHIFT)) {
+                int mx = Fl::event_x() - x();
+                int my = Fl::event_y() - y();
+
+                // Map window coords to grid coords
+                float scaleX = (float)WIDTH / w();
+                float scaleY = (float)HEIGHT / h();
+
+                // OpenGL coords are inverted in Y relative to window
+                int gridX = mx * scaleX;
+                int gridY = (h() - my) * scaleY;
+
+                sim.seed(gridX, gridY, 5);
+                return 1;
+            }
         }
         return Fl_Gl_Window::handle(event);
     }
@@ -198,12 +217,19 @@ public:
     void draw() {
         if (!valid()) {
             glViewport(0, 0, w(), h());
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
-            glMatrixMode(GL_MODELVIEW);
-            glLoadIdentity();
+            glEnable(GL_DEPTH_TEST);
         }
+
+        if (view3d) {
+            draw3d();
+            return;
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
 
         // Convert Simulation Grid to Colors (Visualization)
         // High Activator (u) - Low Inhibitor (v) = Solid Crystal
@@ -237,25 +263,66 @@ public:
             pixels[i*3+2] = b;
         }
 
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         
         // Draw the pixel array directly to screen
         glRasterPos2i(0, 0);
         glDrawPixels(WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, pixels);
     }
+
+    void draw3d() {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45, (double)w()/h(), 1, 1000);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0, 0, -400);
+        glRotatef(rotX, 1, 0, 0);
+        glRotatef(rotY, 0, 1, 0);
+        glTranslatef(-WIDTH/2, -HEIGHT/2, 0);
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glBegin(GL_POINTS);
+        for (int y = 0; y < HEIGHT; y+=2) {
+            for (int x = 0; x < WIDTH; x+=2) {
+                int i = y * WIDTH + x;
+                double v = sim.grid[i].v;
+                if (v < 0.05) continue;
+
+                double val = v * 3.0;
+                if(val > 1.0) val = 1.0;
+
+                glColor3f(val * 0.1, val * 0.8, val);
+                glVertex3f(x, y, v * 80.0);
+            }
+        }
+        glEnd();
+    }
 };
 
+void view_cb(Fl_Widget* w, void* v) {
+    CrystalWindow* win = (CrystalWindow*)v;
+    win->view3d = !win->view3d;
+}
+
 int main(int argc, char** argv) {
-    Fl_Window* mainWin = new Fl_Window(512, 512, "Turing Crystal Growth Visualizer");
+    Fl_Window* mainWin = new Fl_Window(700, 512, "Turing Crystal Growth Visualizer");
     CrystalWindow* simWin = new CrystalWindow(0, 0, 512, 512, "Sim");
     
+    Fl_Button* btn3d = new Fl_Button(530, 30, 150, 30, "Toggle 3D View");
+    btn3d->callback(view_cb, simWin);
+
+    Fl_Box* info = new Fl_Box(530, 70, 150, 250,
+        "--- Controls ---\n\n"
+        "Left-Click:\nSeed impurities\n\n"
+        "Right-Click/Shift:\nRotate 3D View\n\n"
+        "Turing Diffusion\ncreates patterns\nbased on molecular\nenergy landscapes.");
+    info->align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+
     mainWin->resizable(simWin);
     mainWin->end();
     mainWin->show(argc, argv);
-    
-    std::cout << "--- Controls ---\n";
-    std::cout << "Mouse Click/Drag: Introduce nucleation sites (impurities)\n";
-    std::cout << "Watch as Turing Diffusion creates dendritic crystal patterns.\n";
     
     return Fl::run();
 }

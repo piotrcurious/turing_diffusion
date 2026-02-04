@@ -546,6 +546,57 @@ class AdvancedSnowflakeSimulation:
         plt.tight_layout()
         return anim
 
+def sample_3d_visualization(model):
+    """Create a simple 3D visualization of the snowflake."""
+    try:
+        from mpl_toolkits.mplot3d import Axes3D
+        import matplotlib.pyplot as plt
+        from matplotlib import cm
+    except ImportError:
+        print("3D plotting requires mpl_toolkits.mplot3d")
+        return
+
+    # Create figure
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Get grid coordinates
+    x = np.arange(model.size)
+    y = np.arange(model.size)
+    X, Y = np.meshgrid(x, y)
+
+    # Extract the crystal grid
+    Z = model.crystal.astype(float)
+
+    # Create 3D plot
+    stride = max(1, model.size // 100)
+    X_thin = X[::stride, ::stride]
+    Y_thin = Y[::stride, ::stride]
+    Z_thin = Z[::stride, ::stride]
+
+    # Height is based on crystal presence + distance from center
+    r_dist = np.sqrt((X_thin - model.center)**2 + (Y_thin - model.center)**2)
+    H = Z_thin * 5.0 * (1.2 - 0.4 * r_dist / model.center)
+
+    ax.plot_surface(X_thin, Y_thin, H, facecolors=cm.Blues(Z_thin),
+                    linewidth=0, antialiased=True, alpha=0.9)
+
+    # Set labels and title
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Thickness')
+    ax.set_title(f'3D Reconstruction of Snowflake\n'
+                 'Crystallographic directions are governed by molecular lattice symmetry.')
+
+    # Set equal aspect ratio
+    ax.set_box_aspect([1, 1, 0.3])
+    ax.view_init(elev=35, azim=45)
+
+    plt.tight_layout()
+    plt.savefig("snowflake3b_3d.png", dpi=300)
+    print("3D visualization saved as snowflake3b_3d.png")
+    plt.show()
+
 def temperature_study():
     """Study the effect of temperature on snowflake morphology."""
     # Different temperature regimes lead to different snowflake types
@@ -761,6 +812,7 @@ def main():
     parser.add_argument("--diff", type=float, default=0.14, help="Diffusion coefficient")
     parser.add_argument("--animate", action="store_true", help="Create animation")
     parser.add_argument("--interactive", action="store_true", help="Run interactive GUI")
+    parser.add_argument("--view3d", action="store_true", help="Show 3D visualization")
     parser.add_argument("--output", type=str, default="snowflake.png", help="Output image path")
     parser.add_argument("--study", type=str, choices=["temp", "sym", "param"], 
                         help="Run a parameter study")
@@ -769,6 +821,19 @@ def main():
     
     if args.interactive:
         matplotlib_interactive_simulation(args)
+        return
+
+    if args.view3d:
+        print(f"Creating 3D model...")
+        sim = AdvancedSnowflakeSimulation(
+            size=args.size,
+            symmetry_order=args.sym,
+            diffusion_coefficient=args.diff,
+            anisotropy_strength=args.anis,
+            temperature=args.temp
+        )
+        sim.run(steps=args.steps)
+        sample_3d_visualization(sim)
         return
 
     # Run parameter studies if requested

@@ -30,7 +30,9 @@ struct Substance {
     double F;          // Feed rate (roughly correlates to supersaturation)
     double k;          // Kill rate (roughly correlates to solubility limit)
     double anisotropy; // 0.0 = Isotropic, 1.0 = Highly directional lattice
+    int symmetry;      // 0: Isotropic, 4: Cubic, 6: Hexagonal
     float r, g, b;     // Natural color of the mineral
+    std::string info;  // Molecular structure explanation
 };
 
 // Global Simulation State
@@ -60,16 +62,20 @@ public:
         // Define Real-ish presets based on pattern morphology
         
         // 1. Copper Sulfate (Triclinic): Chaotic, blue, fast growth
-        substances.push_back({"Copper Sulfate", 0.16, 0.08, 0.060, 0.062, 0.05, 0.0f, 0.4f, 0.9f});
+        substances.push_back({"Copper Sulfate", 0.16, 0.08, 0.060, 0.062, 0.05, 0, 0.0f, 0.4f, 0.9f,
+            "Structure: Triclinic\nLow symmetry leads to chaotic, branching growth."});
         
         // 2. Snow/Ice (Hexagonal): Very low feed, high symmetry, dendritic
-        substances.push_back({"Ice (Snowflake)", 0.19, 0.09, 0.035, 0.060, 0.80, 0.9f, 0.95f, 1.0f});
+        substances.push_back({"Ice (Snowflake)", 0.19, 0.09, 0.035, 0.060, 0.80, 6, 0.9f, 0.95f, 1.0f,
+            "Structure: Hexagonal (Ih)\n6-fold symmetry from hydrogen bond networks."});
         
         // 3. Pyrite (Cubic): Blocky, gold, stable patterns
-        substances.push_back({"Pyrite (Fools Gold)", 0.14, 0.06, 0.040, 0.060, 0.95, 0.8f, 0.7f, 0.2f});
+        substances.push_back({"Pyrite (Fools Gold)", 0.14, 0.06, 0.040, 0.060, 0.95, 4, 0.8f, 0.7f, 0.2f,
+            "Structure: Cubic\nStrong axis-aligned growth creates blocky crystals."});
 
         // 4. Malachite (Botryoidal): Banded, green, oscillating
-        substances.push_back({"Malachite", 0.12, 0.08, 0.025, 0.055, 0.10, 0.1f, 0.8f, 0.3f});
+        substances.push_back({"Malachite", 0.12, 0.08, 0.025, 0.055, 0.10, 0, 0.1f, 0.8f, 0.3f,
+            "Structure: Monoclinic\nForms botryoidal (grape-like) masses."});
 
         currentSubstance = substances[0];
         reset();
@@ -97,6 +103,13 @@ public:
     void getLaplacian(int x, int y, double& lapU, double& lapV) {
         double u = grid[y * WIDTH + x].u;
         double v = grid[y * WIDTH + x].v;
+
+        // Add symmetry bias based on angle from center
+        double angle = atan2(y - HEIGHT/2.0, x - WIDTH/2.0);
+        double bias = 1.0;
+        if (currentSubstance.symmetry > 0) {
+            bias = 1.0 + currentSubstance.anisotropy * cos(currentSubstance.symmetry * angle);
+        }
 
         // Orthogonal neighbors
         int l = (x - 1 + WIDTH) % WIDTH;
@@ -165,6 +178,8 @@ class SimulationView : public Fl_Gl_Window {
 public:
     CrystalSimulation* sim;
     unsigned char* pixels;
+    bool view3d = false;
+    float rotX = 20, rotY = -20;
 
     SimulationView(int X, int Y, int W, int H, CrystalSimulation* s)
         : Fl_Gl_Window(X, Y, W, H), sim(s) {
@@ -187,8 +202,19 @@ public:
     void draw() {
         if (!valid()) {
             glViewport(0, 0, w(), h());
-            glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+            glEnable(GL_DEPTH_TEST);
         }
+
+        if (view3d) {
+            draw3d();
+            return;
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
 
         // Render Loop
         for (int i = 0; i < WIDTH * HEIGHT; ++i) {
@@ -221,21 +247,84 @@ public:
         glDrawPixels(WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, pixels);
     }
 
+    void draw3d() {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45, (double)w()/h(), 1, 1000);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0, 0, -400);
+        glRotatef(rotX, 1, 0, 0);
+        glRotatef(rotY, 0, 1, 0);
+        glTranslatef(-WIDTH/2, -HEIGHT/2, 0);
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glBegin(GL_POINTS);
+        for (int y = 0; y < HEIGHT; y+=2) {
+            for (int x = 0; x < WIDTH; x+=2) {
+                int i = y * WIDTH + x;
+                double v = sim->grid[i].v;
+                if (v < 0.01) continue;
+
+                double intensity = v * 3.5;
+                if(intensity > 1.0) intensity = 1.0;
+
+                glColor3f(currentSubstance.r * intensity,
+                          currentSubstance.g * intensity,
+                          currentSubstance.b * intensity);
+
+                glVertex3f(x, y, v * 100.0);
+            }
+        }
+        glEnd();
+    }
+
     int handle(int event) {
+        static int last_mx, last_my;
+        if (event == FL_PUSH) {
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+        }
+
+        if (event == FL_DRAG) {
+            if (Fl::event_button3() || (Fl::event_state() & FL_SHIFT)) {
+                rotY += (Fl::event_x() - last_mx);
+                rotX += (Fl::event_y() - last_my);
+                last_mx = Fl::event_x();
+                last_my = Fl::event_y();
+                redraw();
+                return 1;
+            }
+        }
+
         if (event == FL_PUSH || event == FL_DRAG) {
-            // Mapping mouse to grid
-            double sx = (double)WIDTH / w();
-            double sy = (double)HEIGHT / h();
-            int gx = Fl::event_x() * sx;
-            int gy = (h() - Fl::event_y()) * sy;
-            sim->seed(gx, gy, 4);
-            return 1;
+            if (!Fl::event_button3() && !(Fl::event_state() & FL_SHIFT)) {
+                // Mapping mouse to grid
+                int mx = Fl::event_x() - x();
+                int my = Fl::event_y() - y();
+                double sx = (double)WIDTH / w();
+                double sy = (double)HEIGHT / h();
+                int gx = mx * sx;
+                int gy = (h() - my) * sy;
+                sim->seed(gx, gy, 4);
+                return 1;
+            }
         }
         return Fl_Gl_Window::handle(event);
     }
 };
 
+// UI Pointers
+Fl_Box* notePtr = nullptr;
+
 // --- UI Callbacks ---
+
+void view_cb(Fl_Widget* w, void* v) {
+    SimulationView* view = (SimulationView*)v;
+    view->view3d = !view->view3d;
+    view->redraw();
+}
 
 void choice_cb(Fl_Widget* w, void* v) {
     Fl_Choice* c = (Fl_Choice*)w;
@@ -245,6 +334,7 @@ void choice_cb(Fl_Widget* w, void* v) {
     // Update Sliders to match preset
     if (fSliderPtr) fSliderPtr->value(currentSubstance.F);
     if (kSliderPtr) kSliderPtr->value(currentSubstance.k);
+    if (notePtr) notePtr->label(currentSubstance.info.c_str());
 
     std::cout << "Selected: " << currentSubstance.name << std::endl;
     resetFlag = true;
@@ -294,12 +384,15 @@ int main(int argc, char** argv) {
     kSliderPtr->value(substances[0].k);
     kSliderPtr->callback(kill_cb);
 
+    Fl_Button* btn3d = new Fl_Button(430, 200, 150, 30, "Toggle 3D View");
+    btn3d->callback(view_cb, simView);
+
+    // Instructions / Molecular Info
+    notePtr = new Fl_Box(430, 240, 150, 100, currentSubstance.info.c_str());
+    notePtr->align(FL_ALIGN_WRAP | FL_ALIGN_TOP | FL_ALIGN_INSIDE);
+
     Fl_Button* btnReset = new Fl_Button(430, 380, 150, 30, "Clear / Reset");
     btnReset->callback(reset_cb);
-
-    // Instructions
-    Fl_Box* note = new Fl_Box(430, 200, 150, 150, "Controls:\n\nSelect a mineral preset\nto see different\ngrowth habits.\n\nClick in the black box\nto seed crystals.");
-    note->align(FL_ALIGN_WRAP | FL_ALIGN_INSIDE);
 
     win->end();
     win->show(argc, argv);

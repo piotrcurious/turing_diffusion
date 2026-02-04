@@ -184,6 +184,8 @@ class ElectroWindow : public Fl_Gl_Window {
 public:
     ElectroSimulation* sim;
     unsigned char* pixels;
+    bool view3d = false;
+    float rotX = 20, rotY = -20;
 
     ElectroWindow(int X, int Y, int W, int H, ElectroSimulation* s)
         : Fl_Gl_Window(X, Y, W, H), sim(s) {
@@ -205,8 +207,19 @@ public:
     void draw() {
         if (!valid()) {
             glViewport(0, 0, w(), h());
-            glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+            glEnable(GL_DEPTH_TEST);
         }
+
+        if (view3d) {
+            draw3d();
+            return;
+        }
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, WIDTH, 0, HEIGHT, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
 
         // Visualize
         for (int i = 0; i < WIDTH * HEIGHT; ++i) {
@@ -241,7 +254,7 @@ public:
             pixels[i*3+2] = b;
         }
 
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glRasterPos2i(0, 0);
         glDrawPixels(WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, pixels);
         
@@ -264,12 +277,67 @@ public:
         }
     }
     
+    void draw3d() {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        gluPerspective(45, (double)w()/h(), 1, 1000);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0, 0, -400);
+        glRotatef(rotX, 1, 0, 0);
+        glRotatef(rotY, 0, 1, 0);
+        glTranslatef(-WIDTH/2, -HEIGHT/2, 0);
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glBegin(GL_POINTS);
+        for (int y = 0; y < HEIGHT; y+=2) {
+            for (int x = 0; x < WIDTH; x+=2) {
+                int i = y * WIDTH + x;
+                double v = sim->grid[i].v;
+                double u = sim->grid[i].u;
+                if (v < 0.1 && (1.0 - u) < 0.1) continue;
+
+                if (v > 0.1) {
+                    double intensity = v * 4.0;
+                    if(intensity > 1) intensity = 1;
+                    glColor3f(intensity, intensity*0.5, intensity*0.25);
+                    glVertex3f(x, y, v * 50.0);
+                } else {
+                    double ion = (1.0 - u) * 2.0;
+                    glColor3f(0.1, 0.1, 0.3 * ion);
+                    glVertex3f(x, y, -5.0);
+                }
+            }
+        }
+        glEnd();
+    }
+
     int handle(int event) {
-        if (event == FL_PUSH || event == FL_DRAG) {
-            double sx = (double)WIDTH / w();
-            double sy = (double)HEIGHT / h();
-            sim->seed(Fl::event_x() * sx, (h() - Fl::event_y()) * sy, 4);
+        static int last_mx, last_my;
+        if (event == FL_PUSH) {
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+        }
+
+        if (event == FL_DRAG && (Fl::event_button3() || (Fl::event_state() & FL_SHIFT))) {
+            rotY += (Fl::event_x() - last_mx);
+            rotX += (Fl::event_y() - last_my);
+            last_mx = Fl::event_x();
+            last_my = Fl::event_y();
+            redraw();
             return 1;
+        }
+
+        if (event == FL_PUSH || event == FL_DRAG) {
+            if (!Fl::event_button3() && !(Fl::event_state() & FL_SHIFT)) {
+                int mx = Fl::event_x() - x();
+                int my = Fl::event_y() - y();
+                double sx = (double)WIDTH / w();
+                double sy = (double)HEIGHT / h();
+                sim->seed(mx * sx, (h() - my) * sy, 4);
+                return 1;
+            }
         }
         return Fl_Gl_Window::handle(event);
     }
@@ -285,6 +353,11 @@ void field_cb(Fl_Widget* w, void* v) {
 void volt_cb(Fl_Widget* w, void* v) {
     Fl_Value_Slider* s = (Fl_Value_Slider*)w;
     voltage = s->value();
+}
+
+void view_cb(Fl_Widget* w, void* v) {
+    ElectroWindow* win = (ElectroWindow*)v;
+    win->view3d = !win->view3d;
 }
 
 void reset_cb(Fl_Widget* w, void* v) {
@@ -319,6 +392,9 @@ int main(int argc, char** argv) {
         "Simulates Electroplating\nand Dendrite formation.");
     info->align(FL_ALIGN_WRAP | FL_ALIGN_INSIDE);
     
+    Fl_Button* btn3d = new Fl_Button(370, 310, 170, 30, "Toggle 3D View");
+    btn3d->callback(view_cb, glWin);
+
     Fl_Button* rBtn = new Fl_Button(370, 350, 170, 30, "Reset Simulation");
     rBtn->callback(reset_cb);
     
