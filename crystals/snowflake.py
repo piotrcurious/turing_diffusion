@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.cm as cm
+from scipy.ndimage import convolve, rotate
 
 class SnowflakeSimulation:
     def __init__(self, size=300, hexagonal=True, diffusion_rate=1.0, 
@@ -83,84 +84,31 @@ class SnowflakeSimulation:
     
     def step(self):
         """Perform one step of the simulation."""
-        # Create a copy of the current grid
-        new_grid = self.grid.copy()
-        
         # Apply diffusion using a convolution-like approach
         kernel = np.array([[0.05, 0.2, 0.05], 
                            [0.2, 0, 0.2], 
                            [0.05, 0.2, 0.05]])
         
-        # Manual convolution
-        for i in range(1, self.size-1):
-            for j in range(1, self.size-1):
-                # Skip if this point is already crystallized
-                if self.grid[i, j] > self.threshold:
-                    continue
-                
-                diffusion = 0
-                for ki in range(-1, 2):
-                    for kj in range(-1, 2):
-                        if ki == 0 and kj == 0:
-                            continue
-                        diffusion += self.grid[i+ki, j+kj] * kernel[ki+1, kj+1]
-                
-                # Calculate growth based on diffusion
-                growth = diffusion * self.growth_rate
-                
-                # Add some random noise
-                noise = np.random.randn() * self.noise_level
-                
-                # Update the grid
-                new_grid[i, j] += growth + noise
-                
-                # Threshold to ensure values stay in reasonable range
-                new_grid[i, j] = np.clip(new_grid[i, j], 0, 1)
+        # Only diffuse in non-crystallized areas
+        non_crystal = self.grid <= self.threshold
+        diffusion = convolve(self.grid, kernel, mode='constant', cval=0)
+
+        # Growth and noise
+        growth = diffusion * self.growth_rate
+        noise = np.random.randn(*self.grid.shape) * self.noise_level
+
+        # Update the grid
+        update = (growth + noise) * non_crystal
+        self.grid = np.clip(self.grid + update, 0, 1)
         
         # Apply hexagonal symmetry if enabled
         if self.hexagonal:
-            # Calculate the update
-            update = new_grid - self.grid
-            
-            # Calculate distance from center
-            x = np.arange(self.size) - self.center
-            y = np.arange(self.size) - self.center
-            xx, yy = np.meshgrid(x, y)
-            r = np.sqrt(xx**2 + yy**2)
-            
-            # Calculate angle from center
-            angle = np.arctan2(yy, xx)
-            
-            # Get the first sector (0 to π/3)
-            first_sector = (angle >= 0) & (angle < np.pi/3)
-            
-            # Apply update only to first sector
-            sector_update = np.zeros_like(update)
-            sector_update[first_sector] = update[first_sector]
-            
-            # Apply 6-fold symmetry
-            for i in range(6):
-                rot_angle = i * np.pi/3
-                rot_cos = np.cos(rot_angle)
-                rot_sin = np.sin(rot_angle)
-                
-                # Rotate coordinates
-                xr = xx * rot_cos - yy * rot_sin
-                yr = xx * rot_sin + yy * rot_cos
-                
-                # Map back to pixel coordinates
-                xi = np.round(xr + self.center).astype(int)
-                yi = np.round(yr + self.center).astype(int)
-                
-                # Filter valid indices
-                valid = (xi >= 0) & (xi < self.size) & (yi >= 0) & (yi < self.size)
-                
-                # Apply update to rotated positions
-                for x, y in zip(xi[first_sector & valid].flat, yi[first_sector & valid].flat):
-                    if 0 <= x < self.size and 0 <= y < self.size:
-                        new_grid[y, x] = self.grid[y, x] + sector_update[first_sector][0]
-        
-        self.grid = new_grid
+            # We use a simple rotational averaging for symmetry
+            symmetric_grid = np.copy(self.grid)
+            for i in range(1, 6):
+                rotated = rotate(self.grid, i * 60, reshape=False, order=1, mode='constant', cval=0)
+                symmetric_grid = np.maximum(symmetric_grid, rotated)
+            self.grid = symmetric_grid
         
         # Apply threshold
         self.grid[self.grid > self.threshold] = 1.0

@@ -90,8 +90,9 @@ class AdvancedSnowflakeSimulation:
         # Compute internal parameters based on physical relationships
         self.compute_physical_parameters()
         
-        # Initialize grid state
-        self.init_simulation_grid()
+        # Set internal grid size and center
+        self.internal_size = int(self.size * self.resolution_factor)
+        self.center = self.internal_size // 2
         
         # Create lookup tables for efficiency
         self.create_lookup_tables()
@@ -99,6 +100,9 @@ class AdvancedSnowflakeSimulation:
         # Properties to track simulation state
         self.step_count = 0
         self.max_radius = initial_seed_size
+
+        # Initialize grid state
+        self.init_simulation_grid()
         
     def compute_physical_parameters(self):
         """Compute physical parameters based on temperature, humidity, etc."""
@@ -133,10 +137,7 @@ class AdvancedSnowflakeSimulation:
     def init_simulation_grid(self):
         """Initialize the simulation grids."""
         # Expand internal grid if using higher resolution
-        internal_size = int(self.size * self.resolution_factor)
-        
-        # Center point of the grid
-        self.center = internal_size // 2
+        internal_size = self.internal_size
         
         # Create grids:
         # - crystal: 1 where crystal exists, 0 elsewhere
@@ -144,7 +145,7 @@ class AdvancedSnowflakeSimulation:
         # - temperature: temperature field
         self.crystal = np.zeros((internal_size, internal_size))
         self.vapor = np.ones((internal_size, internal_size)) * self.boundary_vapor_density
-        self.temperature = np.ones((internal_size, internal_size)) * self.temperature
+        self.temp_field = np.ones((internal_size, internal_size)) * self.temperature
         
         # Add a seed crystal at the center
         seed_size = self.initial_seed_size
@@ -193,7 +194,7 @@ class AdvancedSnowflakeSimulation:
     
     def create_lookup_tables(self):
         """Create lookup tables for efficient computation of symmetric operations."""
-        internal_size = int(self.size * self.resolution_factor)
+        internal_size = self.internal_size
         
         # Create distance and angle maps for efficient calculations
         y, x = np.ogrid[-self.center:internal_size-self.center, -self.center:internal_size-self.center]
@@ -226,7 +227,7 @@ class AdvancedSnowflakeSimulation:
 
     def apply_boundary_conditions(self):
         """Apply boundary conditions to the simulation."""
-        internal_size = int(self.size * self.resolution_factor)
+        internal_size = self.internal_size
         
         # Set vapor density at boundaries
         # Use a soft boundary that depends on distance from center
@@ -234,7 +235,7 @@ class AdvancedSnowflakeSimulation:
         self.vapor[mask] = self.boundary_vapor_density
         
         # Fix temperature at boundaries
-        self.temperature[mask] = self.temperature
+        self.temp_field[mask] = self.temperature
         
         # Also enforce high vapor density far from crystal to prevent depletion
         far_from_crystal = self.distance_map > max(internal_size * 0.3, self.max_radius * 2)
@@ -274,7 +275,7 @@ class AdvancedSnowflakeSimulation:
                 elif neighbor_count == 3:  # Possibly a tip
                     self.tip_bias_map[i, j] = (self.tip_bias + 1) / 2
     
-    @jit(nopython=False)  # Use Numba for acceleration if available
+    # @jit(nopython=False)  # Use Numba for acceleration if available
     def diffuse_vapor(self, steps=10):
         """
         Solve the diffusion equation for vapor concentration around the crystal.
@@ -449,7 +450,7 @@ class AdvancedSnowflakeSimulation:
         else:
             return self.vapor
     
-  def visualize(self, include_vapor=True, cmap='ice', dpi=150, save=False, filename=None):
+    def visualize(self, include_vapor=True, cmap='ice', dpi=150, save=False, filename=None):
         """Visualize the current state of the snowflake simulation."""
         # Get display data
         crystal_display = self.get_display_crystal()
@@ -678,3 +679,26 @@ def main():
         return
     
     # Create simulation
+    print(f"Initializing simulation: T={args.temp}°C, H={args.humidity*100:.0f}%")
+    sim = AdvancedSnowflakeSimulation(
+        size=args.size,
+        temperature=args.temp,
+        humidity=args.humidity,
+        random_seed=args.seed,
+        symmetry_order=args.sym
+    )
+
+    # Run simulation
+    sim.run(args.steps)
+
+    # Visualization
+    if args.animate:
+        print("Creating animation...")
+        sim.create_animation(save_gif=args.save)
+    else:
+        print("Creating visualization...")
+        fig = sim.visualize(include_vapor=args.vapor, save=args.save)
+        plt.show()
+
+if __name__ == "__main__":
+    main()
